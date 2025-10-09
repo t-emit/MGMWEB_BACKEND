@@ -11,7 +11,7 @@ const app = express();
 connectDB();
 
 // Init Middleware
-a// NEW and production-ready
+// NEW and production-ready
 const allowedOrigins = [
     'http://localhost:5173', // For local development
     process.env.FRONTEND_URL  // For the deployed frontend
