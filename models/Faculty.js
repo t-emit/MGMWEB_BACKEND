@@ -6,8 +6,7 @@ const FacultySchema = new mongoose.Schema({
         required: true,
         trim: true
     },
-    // Using 'title' as per your frontend code
-    title: {
+    title: { // e.g., "Professor", "Head of Department"
         type: String,
         required: true,
         trim: true
@@ -17,16 +16,12 @@ const FacultySchema = new mongoose.Schema({
         required: true,
         trim: true
     },
-    // IMPORTANT: The photo URL is NOT required
     profileImageUrl: {
         type: String,
-        required: false
-    },
-    // Cloudinary Public ID for deleting the image later
-    cloudinaryPublicId: {
-        type: String,
-        required: false
+        default: '' // Use a default empty string if no photo is provided
     }
+}, {
+    timestamps: true // Adds createdAt and updatedAt fields automatically
 });
 
 module.exports = mongoose.model('Faculty', FacultySchema);

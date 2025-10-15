@@ -1,34 +1,34 @@
+// models/pageContentModel.js
 const mongoose = require('mongoose');
 
-const contentBlockSchema = new mongoose.Schema({
-    type: {
-        type: String,
-        required: true,
-        enum: ['heading', 'paragraph', 'image', 'list', 'pdfLink'] // Add more types as needed
-    },
-    content: {
-        type: mongoose.Schema.Types.Mixed, // Allows for flexibility (string for text, object for image, array for list)
-        required: true
-    }
-    // Example `content` structures:
-    // for 'heading'/'paragraph': "Some text content"
-    // for 'image': { url: "path/to/image.jpg", alt: "Description" }
-    // for 'list': ["Item 1", "Item 2", "Item 3"]
-    // for 'pdfLink': { url: "path/to/doc.pdf", text: "Download PDF" }
-}, { _id: false });
-
 const pageContentSchema = new mongoose.Schema({
-    pageIdentifier: {
-        type: String,
-        required: true,
-        unique: true, // e.g., 'about-us', 'home', 'contact'
-        trim: true
-    },
-    pageTitle: {
-        type: String,
-        required: true // e.g., 'About Us'
-    },
-    contentBlocks: [contentBlockSchema]
-}, { timestamps: true, strict: false }); // strict: false allows for additional fields if needed});
+  slug: {
+    type: String,
+    required: [true, 'Page slug is required'],
+    unique: true,
+    trim: true,
+    lowercase: true,
+  },
+  title: {
+    type: String,
+    required: [true, 'Page title is required'],
+    trim: true,
+  },
+  subtitle: {
+    type: String,
+    trim: true,
+  },
+  content: {
+    type: String, // This will store the main HTML content from the rich text editor
+    required: true,
+    default: '<p>Start editing this page...</p>',
+  },
+  lastUpdatedBy: {
+    type: String, // Or mongoose.Schema.Types.ObjectId if you link to a User model
+    required: true,
+  },
+}, { timestamps: true });
 
-module.exports = mongoose.model('PageContent', pageContentSchema);
+const PageContent = mongoose.model('PageContent', pageContentSchema);
+
+module.exports = PageContent;

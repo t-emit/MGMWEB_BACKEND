@@ -1,22 +1,23 @@
+// routes/events.js
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const cloudinary = require('cloudinary').v2;
-const authMiddleware = require('../middleware/authMiddleware');
+const { createClient } = require('@supabase/supabase-js');
+const { protect, admin } = require('../middleware/authMiddleware');
 const Event = require('../models/Event');
 
-// Configure Cloudinary (it uses the .env variables)
-cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+// Initialize Supabase client
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Configure Multer to handle files in memory
+// Configure Multer for in-memory file storage
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-// @route   GET /api/events (No changes needed here)
+// @route   GET /api/events
+// @desc    Get all events
+// @access  Public
 router.get('/', async (req, res) => {
     try {
         const events = await Event.find().sort({ date: -1 });
@@ -27,83 +28,82 @@ router.get('/', async (req, res) => {
     }
 });
 
-// @route   POST /api/events (MAJOR CHANGES HERE)
-// @desc    Add a new event with optional file uploads
-router.post('/', [authMiddleware, upload.fields([{ name: 'image', maxCount: 1 }, { name: 'pdf', maxCount: 1 }])], async (req, res) => {
-    if (req.user.role !== 'admin') {
-        return res.status(403).json({ msg: 'Access denied' });
-    }
+// @route   POST /api/events
+// @desc    Add a new event with optional file uploads to Supabase
+// @access  Private (Admin)
+router.post('/',
+    [protect, admin, upload.fields([{ name: 'image', maxCount: 1 }, { name: 'pdf', maxCount: 1 }])],
+    async (req, res) => {
+        const { title, date, description, link, type } = req.body;
 
-    const { title, date, description, link, type } = req.body;
+        try {
+            let imageUrl = '';
+            let pdfUrl = '';
 
-    try {
-        let imageUrl = '', imagePublicId = '', pdfUrl = '', pdfPublicId = '';
+            // Helper function to upload a file to a specific Supabase path
+            const uploadToSupabase = async (file, path) => {
+                const fileName = `${Date.now()}-${file.originalname.replace(/\s/g, '_')}`;
+                const { data, error } = await supabase.storage
+                    .from('page-assets') // Or a different bucket like 'event-assets'
+                    .upload(`${path}/${fileName}`, file.buffer, {
+                        contentType: file.mimetype,
+                    });
+                if (error) throw error;
+                return `${supabaseUrl}/storage/v1/object/public/page-assets/${data.path}`;
+            };
 
-        // Helper function to upload a buffer to Cloudinary
-        const uploadToCloudinary = (fileBuffer, options) => {
-            return new Promise((resolve, reject) => {
-                const uploadStream = cloudinary.uploader.upload_stream(options, (error, result) => {
-                    if (error) reject(error);
-                    else resolve(result);
-                });
-                uploadStream.end(fileBuffer);
+            // Check for and upload the image file
+            if (req.files && req.files.image) {
+                imageUrl = await uploadToSupabase(req.files.image[0], 'event-images');
+            }
+
+            // Check for and upload the PDF file
+            if (req.files && req.files.pdf) {
+                pdfUrl = await uploadToSupabase(req.files.pdf[0], 'event-pdfs');
+            }
+
+            const newEvent = new Event({
+                title, date, description, link, type,
+                imageUrl, // Store the public Supabase URL
+                pdfUrl,   // Store the public Supabase URL
             });
-        };
 
-        // Check for and upload the image file
-        if (req.files && req.files.image) {
-            const imageResult = await uploadToCloudinary(req.files.image[0].buffer, { folder: "mgm_events_images" });
-            imageUrl = imageResult.secure_url;
-            imagePublicId = imageResult.public_id;
+            const event = await newEvent.save();
+            res.json(event);
+
+        } catch (err) {
+            console.error('Error creating event:', err.message);
+            res.status(500).send('Server Error');
         }
-
-        // Check for and upload the PDF file
-        if (req.files && req.files.pdf) {
-            const pdfResult = await uploadToCloudinary(req.files.pdf[0].buffer, { folder: "mgm_events_pdfs", resource_type: "auto" });
-            pdfUrl = pdfResult.secure_url;
-            pdfPublicId = pdfResult.public_id;
-        }
-
-        const newEvent = new Event({
-            title, date, description, link, type,
-            imageUrl, imagePublicId, pdfUrl, pdfPublicId
-        });
-
-        const event = await newEvent.save();
-        res.json(event);
-
-    } catch (err) {
-        console.error(err.message);
-        res.status(500).send('Server Error');
     }
-});
+);
 
-// @route   DELETE /api/events/:id (MAJOR CHANGES HERE)
-// @desc    Delete an event and its associated files from Cloudinary
-router.delete('/:id', authMiddleware, async (req, res) => {
-    if (req.user.role !== 'admin') {
-        return res.status(403).json({ msg: 'Access denied' });
-    }
-
+// @route   DELETE /api/events/:id
+// @desc    Delete an event and its associated files from Supabase
+// @access  Private (Admin)
+router.delete('/:id', [protect, admin], async (req, res) => {
     try {
         const event = await Event.findById(req.params.id);
         if (!event) return res.status(404).json({ msg: 'Event not found' });
 
-        // If an image exists on Cloudinary, delete it
-        if (event.imagePublicId) {
-            await cloudinary.uploader.destroy(event.imagePublicId);
-        }
-        
-        // If a PDF exists on Cloudinary, delete it
-        if (event.pdfPublicId) {
-            await cloudinary.uploader.destroy(event.pdfPublicId, { resource_type: "raw" }); // PDFs might be stored as 'raw'
-        }
+        // Helper function to extract file path from URL for deletion
+        const getPathFromUrl = (url) => {
+            if (!url) return null;
+            return url.substring(url.indexOf('/page-assets/') + '/page-assets/'.length);
+        };
+
+        const imagePath = getPathFromUrl(event.imageUrl);
+        const pdfPath = getPathFromUrl(event.pdfUrl);
+
+        // Delete files from Supabase if they exist
+        if (imagePath) await supabase.storage.from('page-assets').remove([imagePath]);
+        if (pdfPath) await supabase.storage.from('page-assets').remove([pdfPath]);
 
         await Event.findByIdAndDelete(req.params.id);
         res.json({ msg: 'Event removed' });
 
     } catch (err) {
-        console.error(err.message);
+        console.error('Error deleting event:', err.message);
         res.status(500).send('Server Error');
     }
 });

@@ -1,18 +1,17 @@
+// routes/faculty.js
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const cloudinary = require('cloudinary').v2;
-const authMiddleware = require('../middleware/authMiddleware');
+const { createClient } = require('@supabase/supabase-js');
+const { protect, admin } = require('../middleware/authMiddleware');
 const Faculty = require('../models/Faculty');
 
-// Configure Cloudinary
-cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+// Initialize Supabase client using environment variables
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Configure Multer for in-memory file storage
+// Configure Multer for in-memory file storage to handle uploads
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
@@ -30,74 +29,80 @@ router.get('/', async (req, res) => {
 });
 
 // @route   POST /api/faculty
-// @desc    Add a new faculty member
+// @desc    Add a new faculty member with photo upload to Supabase
 // @access  Private (Admin)
-router.post('/', [authMiddleware, upload.single('photo')], async (req, res) => {
-    if (req.user.role !== 'admin') {
-        return res.status(403).json({ msg: 'Access denied' });
-    }
-
+router.post('/', [protect, admin, upload.single('photo')], async (req, res) => {
     const { name, title, department } = req.body;
-    
+
     try {
         let profileImageUrl = '';
-        let cloudinaryPublicId = '';
 
-        // Check if a photo was uploaded
+        // Check if a photo file was included in the request
         if (req.file) {
-            // Upload to Cloudinary
-            const result = await new Promise((resolve, reject) => {
-                const uploadStream = cloudinary.uploader.upload_stream(
-                    { folder: "faculty_photos" }, // Optional: organize in a folder
-                    (error, result) => {
-                        if (error) reject(error);
-                        else resolve(result);
-                    }
-                );
-                uploadStream.end(req.file.buffer);
-            });
-            profileImageUrl = result.secure_url;
-            cloudinaryPublicId = result.public_id;
+            // Create a unique file path and name for the uploaded photo
+            const fileName = `faculty-photos/${Date.now()}-${req.file.originalname.replace(/\s/g, '_')}`;
+            
+            // Upload the file buffer to the 'page-assets' bucket in Supabase
+            const { data, error } = await supabase.storage
+                .from('page-assets')
+                .upload(fileName, req.file.buffer, {
+                    contentType: req.file.mimetype,
+                });
+
+            if (error) {
+                // If Supabase returns an error, throw it to the catch block
+                throw error;
+            }
+            
+            // Construct the public URL for the uploaded image
+            profileImageUrl = `${supabaseUrl}/storage/v1/object/public/page-assets/${data.path}`;
         }
 
         const newFaculty = new Faculty({
             name,
             title,
             department,
-            profileImageUrl,
-            cloudinaryPublicId,
+            profileImageUrl, // This will be the Supabase URL or an empty string
         });
 
         const faculty = await newFaculty.save();
-        res.json(faculty);
+        res.status(201).json(faculty);
 
     } catch (err) {
-        console.error(err.message);
+        console.error('Error adding faculty member:', err.message);
         res.status(500).send('Server Error');
     }
 });
 
 // @route   DELETE /api/faculty/:id
-// @desc    Delete a faculty member
+// @desc    Delete a faculty member and their photo from Supabase
 // @access  Private (Admin)
-router.delete('/:id', authMiddleware, async (req, res) => {
-    if (req.user.role !== 'admin') {
-        return res.status(403).json({ msg: 'Access denied' });
-    }
-
+router.delete('/:id', [protect, admin], async (req, res) => {
     try {
         const faculty = await Faculty.findById(req.params.id);
-        if (!faculty) return res.status(404).json({ msg: 'Faculty member not found' });
-
-        // If there's an image in Cloudinary, delete it
-        if (faculty.cloudinaryPublicId) {
-            await cloudinary.uploader.destroy(faculty.cloudinaryPublicId);
+        if (!faculty) {
+            return res.status(404).json({ msg: 'Faculty member not found' });
         }
 
+        // If the faculty member has a photo URL, delete the corresponding file from Supabase
+        if (faculty.profileImageUrl) {
+            // Extract the file path from the full public URL
+            const filePath = faculty.profileImageUrl.split('/page-assets/')[1];
+            if (filePath) {
+                const { error } = await supabase.storage.from('page-assets').remove([filePath]);
+                if (error) {
+                    // Log the error but continue with DB deletion, as the record is more important
+                    console.error('Supabase file deletion error:', error.message);
+                }
+            }
+        }
+
+        // Delete the faculty member's record from the database
         await Faculty.findByIdAndDelete(req.params.id);
-        res.json({ msg: 'Faculty member removed' });
+        res.json({ msg: 'Faculty member removed successfully' });
+
     } catch (err) {
-        console.error(err.message);
+        console.error('Error deleting faculty member:', err.message);
         res.status(500).send('Server Error');
     }
 });
