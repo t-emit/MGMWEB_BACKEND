@@ -9,23 +9,19 @@ const pageContentSchema = new mongoose.Schema({
     trim: true,
     lowercase: true,
   },
-  title: {
+  // Renamed to match the database screenshot for consistency
+  pageTitle: {
     type: String,
     required: [true, 'Page title is required'],
     trim: true,
   },
-  subtitle: {
-    type: String,
-    trim: true,
-  },
+  // CORRECTED: 'content' is now defined as a flexible Object type
   content: {
-    type: String, // This will store the main HTML content from the rich text editor
+    type: mongoose.Schema.Types.Mixed, // Allows for any nested object structure
     required: true,
-    default: '<p>Start editing this page...</p>',
   },
   lastUpdatedBy: {
     type: String, // Or mongoose.Schema.Types.ObjectId if you link to a User model
-    required: true,
   },
 }, { timestamps: true });
 

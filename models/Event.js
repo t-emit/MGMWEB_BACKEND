@@ -23,7 +23,7 @@ const EventSchema = new mongoose.Schema({
     type: { 
         type: String, 
         required: true, 
-        enum: ['news', 'event','achievement'] 
+        enum: ['notice', 'event','news'] 
     },
     imageUrl: { 
         type: String, 
